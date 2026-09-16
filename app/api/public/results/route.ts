@@ -1,0 +1,3 @@
+import { getPublishedResults } from "@/lib/database";
+
+export async function GET(request:Request){const url=new URL(request.url);const results=(await getPublishedResults()).filter((item)=>(!url.searchParams.get("technology")||item.technologyCode===url.searchParams.get("technology"))&&(!url.searchParams.get("indicator")||item.indicatorCode===url.searchParams.get("indicator"))&&(!url.searchParams.get("level")||item.evidenceLevel===url.searchParams.get("level"))&&(!url.searchParams.get("lake")||item.lake===url.searchParams.get("lake"))&&(url.searchParams.get("includeDemo")!=="false"||!item.isDemo));return Response.json({data:results,meta:{count:results.length}})}

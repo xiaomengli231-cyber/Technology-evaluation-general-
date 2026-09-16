@@ -1,0 +1,7 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { calculateRate, calculateTransparencyRate, weightedRollup } from "../lib/calculations.ts";
+
+test("calculates removal and transparency rates without converting missing inputs to zero",()=>{assert.equal(calculateRate(10,4),60);assert.equal(calculateRate(0,0),null);assert.equal(calculateTransparencyRate(2,3),50);});
+test("keeps real zero values and excludes unavailable evidence",()=>{const base={id:"x",technologyCode:"TECH-IP",subTechnologyCode:"IP-AL",caseId:"c",armId:"a",lake:"l",scale:"s",indicatorCode:"C2",unit:"%",basis:"b",formula:"f",evidenceLevel:"E2",evidenceWeight:.8,observedAt:"t",followupDays:1,source:"s",isPrimary:true,isDemo:false,publicationStatus:"published"};const result=weightedRollup([{...base,value:0,status:"可用"},{...base,id:"y",value:100,status:"未报告"}]);assert.equal(result.value,0);assert.equal(result.count,1);});
+test("applies E-level weights",()=>{const base={id:"x",technologyCode:"TECH-IP",subTechnologyCode:"IP-AL",caseId:"c",armId:"a",lake:"l",scale:"s",indicatorCode:"C2",unit:"%",basis:"b",formula:"f",observedAt:"t",followupDays:1,source:"s",status:"可用",isPrimary:true,isDemo:false,publicationStatus:"published"};const result=weightedRollup([{...base,value:80,evidenceLevel:"E1",evidenceWeight:1},{...base,id:"y",value:20,evidenceLevel:"E5",evidenceWeight:.2}]);assert.equal(result.value,70);assert.equal(result.weightSum,1.2);});

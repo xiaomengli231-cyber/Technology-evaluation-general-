@@ -1,0 +1,4 @@
+import { requireAdminApi } from "@/lib/admin";
+import { ensureDatabase, getImportBatch, updateBatchStatus, writeAudit } from "@/lib/database";
+
+export async function POST(_:Request,{params}:{params:Promise<{id:string}>}){const auth=await requireAdminApi();if("response" in auth)return auth.response;const {id}=await params;const batch=await getImportBatch(id);if(!batch)return Response.json({error:"导入批次不存在"},{status:404});const db=await ensureDatabase();if(!db)return Response.json({error:"数据库不可用"},{status:503});await db.batch(["indicator_results","costs","evidence_quality","observations","treatment_arms","cases","sites","literature"].map((table)=>db.prepare(`DELETE FROM ${table} WHERE import_batch_id = ?`).bind(id)));await updateBatchStatus(id,"revoked",auth.user.email);await writeAudit(auth.user.email,"revoke","import_batch",id,{status:batch.status},{status:"revoked"});return Response.json({ok:true});}
