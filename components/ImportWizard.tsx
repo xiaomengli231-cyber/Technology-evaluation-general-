@@ -19,11 +19,11 @@ export function ImportWizard({initialBatches}:{initialBatches:Array<Record<strin
         <div className="uploadActions"><a href="/api/admin/template">下载标准 Excel 模板</a><button disabled={!file||busy} onClick={upload}>{busy?"正在预检…":"上传并预检"}</button></div>
       </div>}
       {batch&&<div className="reviewPanel">
-        <div className="reviewTitle"><div><span className="kicker">批次 {batch.id}</span><h2>{batch.fileName}</h2></div><span className={`statusPill status-${batch.status}`}>{batch.status==="published"?"已发布":batch.errorCount?"发现错误":"待审核"}</span></div>
+        <div className="reviewTitle"><div><span className="kicker">批次 {batch.id}</span><h2>{batch.fileName}</h2></div><span className={`statusPill status-${batch.status}`}>{batch.status==="published"?"已发布":"预检完成"}</span></div>
         <div className="reviewStats"><div><strong>{batch.rowCount}</strong><span>数据行</span></div><div><strong>{batch.mapping.filter((x)=>x.status==="matched").length}</strong><span>已映射字段</span></div><div className={batch.errorCount?"dangerText":""}><strong>{batch.errorCount}</strong><span>错误</span></div><div><strong>{batch.warningCount}</strong><span>警告</span></div></div>
         <h3>字段映射</h3><div className="mappingGrid">{batch.mapping.map((item)=><div key={`${item.sheet}-${item.field}`} className={item.status}><span>{item.sheet}</span><b>{item.field}</b><i>→</i><em>{item.source??"未识别"}</em></div>)}</div>
-        <h3>预检结果</h3>{batch.issues.length?<div className="issueList">{batch.issues.slice(0,20).map((item,index)=><div key={index} className={item.level}><b>{item.level==="error"?"错误":"警告"}</b><span>{item.sheet} · 第 {item.row} 行{item.field?` · ${item.field}`:""}</span><p>{item.message}</p></div>)}</div>:<div className="successBox">未发现错误或警告，可以发布。</div>}
-        <div className="publishBar"><button className="secondaryButton" onClick={()=>{setBatch(null);setFile(null);setMessage("")}}>重新选择</button><button disabled={batch.errorCount>0||batch.status==="published"||busy} onClick={publish}>{batch.status==="published"?"本批次已发布":busy?"正在发布…":"确认并原子发布"}</button></div>
+        <h3>预检结果</h3><p className="precheckNote">预检结果仅供审核参考，不会阻断发布。无法形成有效指标的记录将保留为待核验或仅保存在原始批次中。</p>{batch.issues.length?<div className="issueList">{batch.issues.slice(0,20).map((item,index)=><div key={index} className={item.level}><b>{item.level==="error"?"错误":"警告"}</b><span>{item.sheet} · 第 {item.row} 行{item.field?` · ${item.field}`:""}</span><p>{item.message}</p></div>)}</div>:<div className="successBox">未发现错误或警告，可以发布。</div>}
+        <div className="publishBar"><button className="secondaryButton" onClick={()=>{setBatch(null);setFile(null);setMessage("")}}>重新选择</button><button disabled={batch.status==="published"||busy} onClick={publish}>{batch.status==="published"?"本批次已发布":busy?"正在发布…":"继续发布"}</button></div>
       </div>}
       {message&&<p className={message.includes("失败")||message.includes("不")?"formError":"formMessage"}>{message}</p>}
     </section>
