@@ -79,7 +79,13 @@ function validateRelations(payload:ParsedPayload,issues:ImportIssue[]) {
   const indicatorCodes=new Set(INDICATORS.map((item)=>item.code));
   const validUnits=new Set(["%","mg/L","mg/kg","mg/(m²·d)","mg/(m2·d)","cm","m","g/m²","g/m2","分","元/m²","元/m2","元/(m²·a)","元/(m2·a)","元/m³","元/m3","元/(m³·a)","元/(m3·a)"]);
   (payload.Observation??[]).forEach((row,i)=>{ if(!indicatorCodes.has(text(row["指标代码"]))) issues.push({level:"error",sheet:"Observation",row:i+2,field:"指标代码",message:"指标代码必须为 C1—C11"}); if(!validUnits.has(text(row["原始单位"]))) issues.push({level:"error",sheet:"Observation",row:i+2,field:"原始单位",message:"单位不在可识别列表中"}); if(number(row["原始值"])===null) issues.push({level:"error",sheet:"Observation",row:i+2,field:"原始值",message:"原始值必须为数值，真实零值可以录入"}); });
-  (payload.EvidenceQuality??[]).forEach((row,i)=>{ if(!/^E[1-5]$/.test(text(row["证据等级"]))) issues.push({level:"error",sheet:"EvidenceQuality",row:i+2,field:"证据等级",message:"证据等级必须为 E1—E5"}); for(const code of ["C7评分","C8评分","C9评分"]) { const value=number(row[code]); if(value!==null&&(value<1||value>5)) issues.push({level:"error",sheet:"EvidenceQuality",row:i+2,field:code,message:"评分必须在 1—5 之间"}); } });
+  (payload.EvidenceQuality??[]).forEach((row,i)=>{
+    if(!/^E[1-5]$/.test(text(row["证据等级"]))) issues.push({level:"error",sheet:"EvidenceQuality",row:i+2,field:"证据等级",message:"证据等级必须为 E1—E5"});
+    for(const [field,max] of [["C7评分",7],["C8评分",5],["C9评分",5]] as const) {
+      const value=number(row[field]);
+      if(value!==null&&(!Number.isInteger(value)||value<1||value>max)) issues.push({level:"error",sheet:"EvidenceQuality",row:i+2,field,message:`评分必须为 1—${max} 的整数`});
+    }
+  });
   (payload.Cost??[]).forEach((row,i)=>{ if(number(row["数值"])===null) issues.push({level:"error",sheet:"Cost",row:i+2,field:"数值",message:"成本必须为数值"}); if(!text(row["价格年份"])) issues.push({level:"warning",sheet:"Cost",row:i+2,field:"价格年份",message:"缺少价格年份，成本将保留但不建议跨案例汇总"}); });
 }
 

@@ -76,7 +76,7 @@ export const INDICATORS: IndicatorDefinition[] = [
   { code:"C4", criterion:"B2 水质改善", name:"透明度提升率", unit:"%", principle:"记录观测期、天气、藻类与对照条件" },
   { code:"C5", criterion:"B2 水质改善", name:"上覆水总氮去除率", unit:"%", principle:"优先使用同期对照校正结果" },
   { code:"C6", criterion:"B2 水质改善", name:"上覆水总磷去除率", unit:"%", principle:"优先使用同期对照校正结果" },
-  { code:"C7", criterion:"B3 适用性", name:"技术成熟度", unit:"分", principle:"根据工程尺度、案例数、规模与跟踪期审核" },
+  { code:"C7", criterion:"B3 适用性", name:"技术成熟度", unit:"分", principle:"按成熟度量表审核，评分范围为 1—7" },
   { code:"C8", criterion:"B3 适用性", name:"技术稳定性", unit:"分", principle:"根据效果保持、持续时间与扰动稳定性审核" },
   { code:"C9", criterion:"B3 适用性", name:"环境影响", unit:"分", principle:"综合材料、水化学、施工、生态和长期失效风险" },
   { code:"C10", criterion:"B4 经济性", name:"单位治理规模投资成本", unit:"元/m²", principle:"仅合并价格年份与成本边界兼容的数据" },
