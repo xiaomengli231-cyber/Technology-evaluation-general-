@@ -21,6 +21,7 @@ const schemaStatements = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_result_primary_window ON indicator_results (arm_id, indicator_code, pollutant, observed_at)`,
   `CREATE INDEX IF NOT EXISTS idx_result_public_tech ON indicator_results (publication_status, technology_code, indicator_code)`,
   `CREATE TABLE IF NOT EXISTS import_batches (id TEXT PRIMARY KEY, file_name TEXT NOT NULL, file_type TEXT NOT NULL, entity_type TEXT, object_key TEXT, status TEXT NOT NULL, row_count INTEGER NOT NULL DEFAULT 0, error_count INTEGER NOT NULL DEFAULT 0, warning_count INTEGER NOT NULL DEFAULT 0, mapping_json TEXT NOT NULL, payload_json TEXT NOT NULL, issues_json TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL, published_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, before_json TEXT, after_json TEXT, created_at TEXT NOT NULL)`,
 ];
 
@@ -40,10 +41,61 @@ export async function ensureDatabase() {
 export async function getPublishedResults(): Promise<IndicatorResult[]> {
   const db = await ensureDatabase();
   if (!db) return DEMO_RESULTS;
-  const query = await db.prepare("SELECT * FROM indicator_results WHERE publication_status = 'published' ORDER BY technology_code, indicator_code, observed_at").all<Record<string,unknown>>();
+  const activeBatchId=await getActiveImportBatchId(db);
+  const query = activeBatchId
+    ? await db.prepare("SELECT * FROM indicator_results WHERE publication_status = 'published' AND import_batch_id = ? ORDER BY technology_code, indicator_code, observed_at").bind(activeBatchId).all<Record<string,unknown>>()
+    : await db.prepare("SELECT * FROM indicator_results WHERE publication_status = 'published' ORDER BY technology_code, indicator_code, observed_at").all<Record<string,unknown>>();
   const imported = query.results.map((row:Record<string,unknown>)=>rowToResult(row));
-  return [...DEMO_RESULTS, ...imported];
+  const recovered=await recoverDirectObservationResults(db,imported,activeBatchId);
+  const byId=new Map(imported.map((item)=>[item.id,item]));
+  for(const item of recovered) byId.set(item.id,item);
+  return [...DEMO_RESULTS, ...byId.values()];
 }
+
+async function getActiveImportBatchId(db:D1Database) {
+  const row=await db.prepare("SELECT value FROM system_settings WHERE key = 'active_import_batch_id'").first<{value:string|null}>();
+  return row?.value||null;
+}
+
+export async function setActiveImportBatchId(batchId:string|null,actor:string) {
+  const db=await ensureDatabase();if(!db)throw new Error("数据库绑定不可用");
+  const before=await getActiveImportBatchId(db);
+  await db.prepare("INSERT OR REPLACE INTO system_settings (key,value,updated_by,updated_at) VALUES ('active_import_batch_id',?,?,?)").bind(batchId,actor,new Date().toISOString()).run();
+  await writeAudit(actor,"activate","import_batch",batchId??"all",{activeBatchId:before},{activeBatchId:batchId});
+}
+
+async function recoverDirectObservationResults(db:D1Database,existing:IndicatorResult[],activeBatchId:string|null) {
+  const sql=`SELECT o.id AS observation_id,o.arm_id,o.variable,o.pollutant,o.role,o.raw_value,o.raw_unit,o.observed_at,o.source_locator,o.import_batch_id,
+    a.technology_code,a.sub_technology_code,a.case_id,c.scale,s.lake,e.evidence_level,e.followup_days,l.title
+    FROM observations o
+    JOIN treatment_arms a ON a.id=o.arm_id
+    LEFT JOIN cases c ON c.id=a.case_id
+    LEFT JOIN sites s ON s.id=c.site_id
+    LEFT JOIN evidence_quality e ON e.arm_id=o.arm_id
+    LEFT JOIN literature l ON l.id=c.literature_id
+    WHERE o.publication_status='published' AND o.raw_value IS NOT NULL ${activeBatchId?"AND o.import_batch_id = ?":""}`;
+  const query=activeBatchId?await db.prepare(sql).bind(activeBatchId).all<Record<string,unknown>>():await db.prepare(sql).all<Record<string,unknown>>();
+  const signatures=new Map(existing.map((item)=>[[item.armId,item.indicatorCode,item.pollutant??"",item.observedAt].join("|"),item]));
+  const output:IndicatorResult[]=[];
+  for(const row of query.results){
+    const role=String(row.role??"");const unit=String(row.raw_unit??"");const variable=String(row.variable??"");
+    if(!isUsableDirectPercent(role,unit))continue;
+    const code=inferIndicatorCode(variable);if(!code)continue;
+    const value=Number(row.raw_value);if(!Number.isFinite(value))continue;
+    const pollutant=row.pollutant?String(row.pollutant):undefined;const observedAt=String(row.observed_at??"未填写");const armId=String(row.arm_id);
+    const signature=[armId,code,pollutant??"",observedAt].join("|");const matched=signatures.get(signature);
+    const level=/^E[1-5]$/.test(String(row.evidence_level))?String(row.evidence_level) as IndicatorResult["evidenceLevel"]:"E5";
+    const recovered:IndicatorResult={
+      id:matched?.id??`OBS-${row.observation_id}-${code}`,technologyCode:String(row.technology_code),subTechnologyCode:String(row.sub_technology_code),caseId:String(row.case_id),armId,lake:String(row.lake??"未填写"),scale:String(row.scale??"未填写"),indicatorCode:code,pollutant,value,unit:"%",basis:role,formula:"上传文件已提供百分比结果，宽松核验纳入",evidenceLevel:level,evidenceWeight:({E1:1,E2:.8,E3:.6,E4:.4,E5:.2} as const)[level],observedAt,followupDays:Number(row.followup_days??0),source:`${String(row.title??"未命名文献")} · ${String(row.source_locator??"上传记录")}`,status:"可用",isPrimary:true,isDemo:false,publicationStatus:"published",
+    };
+    if(matched&&matched.value!==null)continue;
+    output.push(recovered);signatures.set(signature,recovered);
+  }
+  return output;
+}
+
+function isUsableDirectPercent(role:string,unit:string){return ["%","％","percent"].includes(unit.trim().toLowerCase())&&!/(未报告|不适用|不可换算|待核验)/.test(role)&&/(直接报告|原文|百分比|估算|比较|去除|削减|抑制|提升)/.test(role);}
+function inferIndicatorCode(variable:string){if(/(释放|通量).*(削减|抑制|降低|率)|(削减|抑制).*(释放|通量)/.test(variable))return"C3";if(/(底泥|沉积物).*(TN|总氮).*(去除|削减)/i.test(variable))return"C1";if(/(底泥|沉积物).*(TP|总磷).*(去除|削减)/i.test(variable))return"C2";if(/(透明度|塞氏盘|SD).*(提升|改善|率)/i.test(variable))return"C4";if(/(上覆水|水体).*(TN|总氮).*(去除|削减)/i.test(variable))return"C5";if(/(上覆水|水体).*(TP|总磷).*(去除|削减)/i.test(variable))return"C6";return null;}
 
 function rowToResult(row: Record<string,unknown>): IndicatorResult {
   return {
@@ -71,8 +123,8 @@ export async function createImportBatch(input:ImportBatchInput) {
 export async function listImportBatches() {
   const db = await ensureDatabase();
   if (!db) return [];
-  const query = await db.prepare("SELECT id,file_name,status,row_count,error_count,warning_count,created_by,created_at,published_at,mapping_json,issues_json FROM import_batches ORDER BY created_at DESC LIMIT 30").all<Record<string,unknown>>();
-  return query.results.map((row)=>({ ...row, mapping:JSON.parse(String(row.mapping_json)), issues:JSON.parse(String(row.issues_json)) }));
+  const [query,activeBatchId] = await Promise.all([db.prepare("SELECT b.id,b.file_name,b.status,b.row_count,b.error_count,b.warning_count,b.created_by,b.created_at,b.published_at,b.mapping_json,b.issues_json,(SELECT COUNT(*) FROM indicator_results r WHERE r.import_batch_id=b.id AND r.publication_status='published') AS result_count FROM import_batches b ORDER BY b.created_at DESC LIMIT 30").all<Record<string,unknown>>(),getActiveImportBatchId(db)]);
+  return query.results.map((row)=>({ ...row, active:activeBatchId===row.id, mapping:JSON.parse(String(row.mapping_json)), issues:JSON.parse(String(row.issues_json)) }));
 }
 
 export async function getImportBatch(id:string):Promise<(Record<string,unknown>&{payload:unknown;issues:unknown;mapping:unknown})|null> {

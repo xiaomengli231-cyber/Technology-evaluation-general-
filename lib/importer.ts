@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
 import { EVIDENCE_WEIGHTS, calculateRate, calculateTransparencyRate } from "./calculations";
 import { INDICATORS, TECHNOLOGIES, type EvidenceLevel } from "./catalog";
-import { ensureDatabase, updateBatchStatus, writeAudit } from "./database";
+import { ensureDatabase, setActiveImportBatchId, updateBatchStatus, writeAudit } from "./database";
 
 export const SHEET_FIELDS = {
   Literature:["文献ID","题名","年份","DOI","链接","全文状态"],
@@ -128,6 +128,7 @@ export async function publishPayload(batchId:string,payload:ParsedPayload,actor:
   for(const row of results) statements.push(db.prepare("INSERT OR REPLACE INTO indicator_results (id,technology_code,sub_technology_code,case_id,arm_id,lake,scale,indicator_code,pollutant,value,unit,basis,formula,evidence_level,evidence_weight,observed_at,followup_days,source,status,is_primary,publication_status,import_batch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'published',?)").bind(row.id,row.tech,row.sub,row.caseId,row.armId,row.lake,row.scale,row.code,row.pollutant,row.value,row.unit,row.basis,row.formula,row.level,row.weight,row.window,row.followup,row.source,row.status,batchId));
   if(statements.length) await db.batch(statements);
   await updateBatchStatus(batchId,"published",actor);
+  await setActiveImportBatchId(batchId,actor);
   await writeAudit(actor,"publish","import_batch",batchId,null,{records:statements.length,results:results.length});
   return {records:statements.length,results:results.length};
 }
@@ -144,10 +145,11 @@ function deriveResults(payload:ParsedPayload,batchId:string) {
   for(const [key,rows] of groups) {
     const [armId,code,pollutant,window]=key.split("|"); const arm=arms.get(armId); if(!arm) continue;
     const caseRow=cases.get(text(arm["案例ID"])); const site=caseRow?sites.get(text(caseRow["地点ID"])):undefined; const lit=caseRow?literature.get(text(caseRow["文献ID"])):undefined; const quality=qualities.get(armId);
-    const roles=new Map(rows.map((row)=>[text(row["观测角色"]),number(row["原始值"])])); let value:number|null=null,basis="",formula="";
-    if(roles.has("处理")&&roles.has("对照")){ value=code==="C4"?calculateTransparencyRate(roles.get("对照")!,roles.get("处理")!):calculateRate(roles.get("对照")!,roles.get("处理")!); basis="同时间点对照"; formula=code==="C4"?"(SDt-SD0)/SD0×100%":"(C0-Ct)/C0×100%"; }
-    else if(roles.has("治理前")&&roles.has("治理后")){ value=code==="C4"?calculateTransparencyRate(roles.get("治理前")!,roles.get("治理后")!):calculateRate(roles.get("治理前")!,roles.get("治理后")!); basis="处理前后比较"; formula=code==="C4"?"(SDt-SD0)/SD0×100%":"(C0-Ct)/C0×100%"; }
-    else { const direct=rows.find((row)=>["原文百分比","图表估算"].includes(text(row["观测角色"]))); if(direct){value=number(direct["原始值"]);basis=text(direct["观测角色"]);formula="原文直接报告/人工复核";} }
+    const roleValue=(patterns:RegExp[])=>{const row=rows.find((item)=>patterns.some((pattern)=>pattern.test(text(item["观测角色"]))));return row?number(row["原始值"]):null;};
+    const treatment=roleValue([/^处理(组|区)?$/,/^治理后$/]),control=roleValue([/^对照(组|区)?$/,/^空白(组|区)?$/]),before=roleValue([/^治理前$/,/^处理前$/]),after=roleValue([/^治理后$/,/^处理后$/]);let value:number|null=null,basis="",formula="";
+    if(treatment!==null&&control!==null){ value=code==="C4"?calculateTransparencyRate(control,treatment):calculateRate(control,treatment); basis="同时间点对照"; formula=code==="C4"?"(SDt-SD0)/SD0×100%":"(C0-Ct)/C0×100%"; }
+    else if(before!==null&&after!==null){ value=code==="C4"?calculateTransparencyRate(before,after):calculateRate(before,after); basis="处理前后比较"; formula=code==="C4"?"(SDt-SD0)/SD0×100%":"(C0-Ct)/C0×100%"; }
+    else { const direct=rows.find((row)=>isDirectPercentObservation(row)); if(direct){value=number(direct["原始值"]);basis=text(direct["观测角色"]);formula="上传文件已提供百分比结果，宽松核验纳入";} }
     const level=evidenceLevel(quality?.["证据等级"]);
     output.push({id:safeId(`${batchId}-${armId}-${code}-${pollutant}-${window}`),tech:text(arm["一级技术编码"]),sub:text(arm["二级技术编码"]),caseId:text(arm["案例ID"]),armId,lake:text(site?.["湖泊"])||"未填写",scale:text(caseRow?.["研究尺度"])||"未填写",code,pollutant:pollutant||null,value,unit:"%",basis:basis||"待核验",formula:formula||"缺少可计算的观测角色组合",level,weight:EVIDENCE_WEIGHTS[level],window,followup:number(quality?.["跟踪天数"])??0,source:`${text(lit?.["题名"])||"未命名文献"} · ${text(rows[0]["来源位置"])}`,status:value===null?"待核验":"可用"});
   }
@@ -161,3 +163,4 @@ const number=(value:unknown)=>{ if(value===""||value===null||value===undefined)r
 const yes=(value:unknown)=>["是","true","1","yes"].includes(text(value).toLowerCase())?1:0;
 const evidenceLevel=(value:unknown):EvidenceLevel=>/^E[1-5]$/.test(text(value))?text(value) as EvidenceLevel:"E5";
 const safeId=(value:string)=>value.replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,180);
+const isDirectPercentObservation=(row:Record<string,unknown>)=>{const role=text(row["观测角色"]),unit=text(row["原始单位"]).toLowerCase();return["%","％","percent"].includes(unit)&&number(row["原始值"])!==null&&!/(未报告|不适用|不可换算|待核验)/.test(role)&&/(直接报告|原文|百分比|估算|比较|去除|削减|抑制|提升)/.test(`${role}${text(row["变量"])}`);};
