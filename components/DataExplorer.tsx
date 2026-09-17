@@ -3,7 +3,8 @@ import { useMemo, useState } from "react";
 import type { IndicatorResult, Technology } from "@/lib/catalog";
 
 export function DataExplorer({results,technologies,initial={}}:{results:IndicatorResult[];technologies:Technology[];initial?:Record<string,string|undefined>}){
-  const [tech,setTech]=useState(initial.technology??""); const [indicator,setIndicator]=useState(initial.indicator??""); const [level,setLevel]=useState(initial.level??""); const [lake,setLake]=useState(initial.lake??""); const [showDemo,setShowDemo]=useState(initial.includeDemo!=="false");
+  const hasOfficial=results.some((item)=>!item.isDemo);
+  const [tech,setTech]=useState(initial.technology??""); const [indicator,setIndicator]=useState(initial.indicator??""); const [level,setLevel]=useState(initial.level??""); const [lake,setLake]=useState(initial.lake??""); const [showDemo,setShowDemo]=useState(initial.includeDemo==="true"||(!hasOfficial&&initial.includeDemo!=="false"));
   const lakes=[...new Set(results.map((item)=>item.lake))];
   const filtered=useMemo(()=>results.filter((item)=>(!tech||item.technologyCode===tech)&&(!indicator||item.indicatorCode===indicator)&&(!level||item.evidenceLevel===level)&&(!lake||item.lake===lake)&&(showDemo||!item.isDemo)),[results,tech,indicator,level,lake,showDemo]);
   const params=new URLSearchParams({technology:tech,indicator,level,lake,includeDemo:String(showDemo)}).toString();

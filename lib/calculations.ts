@@ -29,6 +29,6 @@ export function technologyRollups(results: IndicatorResult[]) {
 }
 
 export function completeness(results: IndicatorResult[]) {
-  const available = new Set(results.filter((item) => item.status === "可用" && item.isPrimary).map((item) => item.indicatorCode)).size;
+  const available = new Set(results.filter((item) => item.status === "可用" && item.isPrimary && item.value !== null).map((item) => item.indicatorCode)).size;
   return { available, applicable: 11, rate: available / 11 };
 }

@@ -2,9 +2,10 @@ import { completeness, technologyRollups } from "@/lib/calculations";
 import type { IndicatorResult, Technology } from "@/lib/catalog";
 
 export function TechnologyCard({ technology, results }:{ technology:Technology; results:IndicatorResult[] }) {
-  const own=results.filter((item)=>item.technologyCode===technology.code);
-  const official=own.filter((item)=>!item.isDemo);
-  const source=official.length?official:own;
+  // Once any formal data has been published, cards must never fall back to
+  // demo values on a technology-by-technology basis.
+  const official=results.filter((item)=>!item.isDemo);
+  const source=(official.length?official:results).filter((item)=>item.technologyCode===technology.code);
   const coverage=completeness(source);
   const rollups=technologyRollups(source).filter((item)=>item.value!==null).slice(0,3);
   const levelCounts=["E1","E2","E3","E4","E5"].map((level)=>source.filter((item)=>item.evidenceLevel===level).length);
